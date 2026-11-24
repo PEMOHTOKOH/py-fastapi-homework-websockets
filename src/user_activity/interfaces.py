@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import List
+from asyncio import Lock
+from typing import Dict, List
 
 from fastapi import WebSocket
 
@@ -27,7 +28,7 @@ class UserActivityRepoInterface(ABC):
         pass
 
     @abstractmethod
-    async def update_user_activity(self, user_data: UpdateUserActivitySchema) -> UpdateUserActivitySchema:
+    async def update_user_activity(self, user_data: UpdateUserActivitySchema) -> UserActivitySchema:
         """
         Update a user's activity status.
 
@@ -52,6 +53,9 @@ class UserActivityRepoInterface(ABC):
 
 class UserActivityWebSocketManagerInterface(ABC):
     """Abstract interface for managing active WebSocket connections and broadcasting activity events."""
+
+    presence_lock: Lock
+    active_connections: Dict[int, List[WebSocket]]
 
     @abstractmethod
     async def connect(self, websocket: WebSocket, user_data: UserActivitySchema) -> None:

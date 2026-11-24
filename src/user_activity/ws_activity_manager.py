@@ -1,3 +1,5 @@
+from asyncio import Lock
+
 from fastapi import WebSocket
 from typing import Dict, List
 
@@ -10,6 +12,7 @@ class UserActivityWebSocketManager(UserActivityWebSocketManagerInterface):
 
     def __init__(self) -> None:
         """Initialize an empty mapping of user IDs to their active WebSocket connections."""
+        self.presence_lock = Lock()
         self.active_connections: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_data: UserActivitySchema) -> None:
@@ -24,7 +27,13 @@ class UserActivityWebSocketManager(UserActivityWebSocketManagerInterface):
         Returns:
             None
         """
-        # Write your code here
+        connections = self.active_connections.setdefault(user_data.user_id, [])
+        connections.append(websocket)
+        if len(connections) == 1:
+            await self._broadcast(
+                {"event": "user_connected", "user": user_data.model_dump(mode="json")},
+                exclude=user_data.user_id,
+            )
 
     async def disconnect(self, user_id: int, websocket: WebSocket) -> None:
         """
@@ -38,7 +47,13 @@ class UserActivityWebSocketManager(UserActivityWebSocketManagerInterface):
         Returns:
             None
         """
-        # Write your code here
+        connections = self.active_connections.get(user_id)
+        if not connections or websocket not in connections:
+            return
+        connections.remove(websocket)
+        if not connections:
+            del self.active_connections[user_id]
+            await self._broadcast({"event": "user_disconnected", "user_id": user_id})
 
     async def _broadcast(self, message: dict, exclude: int = None) -> None:
         """
@@ -51,7 +66,9 @@ class UserActivityWebSocketManager(UserActivityWebSocketManagerInterface):
         Returns:
             None
         """
-        # Write your code here
+        for user_id, connections in tuple(self.active_connections.items()):
+            if user_id != exclude:
+                await self._send_to_connections(message, tuple(connections))
 
     async def send_personal_message(self, message: dict, user_id: int) -> None:
         """
@@ -64,4 +81,13 @@ class UserActivityWebSocketManager(UserActivityWebSocketManagerInterface):
         Returns:
             None
         """
-        # Write your code here
+        await self._send_to_connections(message, tuple(self.active_connections.get(user_id, ())))
+
+    @staticmethod
+    async def _send_to_connections(message: dict, connections: tuple[WebSocket, ...]) -> None:
+        for websocket in connections:
+            try:
+                await websocket.send_json(message)
+            except (WebSocketDisconnect, OSError):
+                # The connection handler owns disconnect cleanup.
+                continue
